@@ -27,6 +27,9 @@ fn main() -> Result<()> {
     assert_eq!(buf_write, buf_read);
     println!("Read was successful.");
 
+    println!("{:?}", &buf_write[args.size as usize - 8..]);
+    println!("{:?}", &buf_read[args.size as usize - 8..]);
+
     Ok(())
 }
 
