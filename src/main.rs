@@ -68,7 +68,12 @@ impl Default for Args {
 impl fmt::Display for Args {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "Channel: {}", self.channel)?;
-        writeln!(f, "Address: 0x{:x}", self.addr)?;
+        writeln!(
+            f,
+            "Address: 0x{:x} - 0x{:x}",
+            self.addr,
+            self.addr + self.size - 1
+        )?;
         writeln!(
             f,
             "Size: {} ({})",
