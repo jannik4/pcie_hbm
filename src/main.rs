@@ -31,7 +31,7 @@ fn main() -> Result<()> {
     let duration = read(0, args.addr, &mut buf_read, args.chunk_size)?;
     assert_eq!(buf_write, buf_read);
     println!(
-        "Read was successful ({:#?} @ {}/s).",
+        "Read was successful ({:?} @ {}/s).",
         duration,
         ISizeFormatter::new(args.size as f64 / duration.as_secs_f64(), BINARY),
     );
