@@ -27,7 +27,7 @@ fn main() -> Result<()> {
 
     // Read
     let mut buf_read = vec![0; args.size as usize];
-    read(0, args.addr, &mut buf_read, args.chunk_size)?;
+    let duration = read(0, args.addr, &mut buf_read, args.chunk_size)?;
     assert_eq!(buf_write, buf_read);
     println!(
         "Read was successful ({}/s).",
