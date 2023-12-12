@@ -1,10 +1,11 @@
 use anyhow::{Context, Result};
-use humansize::{SizeFormatter, BINARY};
+use humansize::{ISizeFormatter, SizeFormatter, BINARY};
 use parse_size::parse_size;
 use std::{
     fmt,
     fs::OpenOptions,
     io::{self, Read, Seek, SeekFrom, Write},
+    time::{Duration, Instant},
 };
 
 fn main() -> Result<()> {
@@ -18,17 +19,20 @@ fn main() -> Result<()> {
     let buf_write = (0..args.size).map(|v| (v % 256) as u8).collect::<Vec<_>>();
 
     // Write
-    write(0, args.addr, &buf_write, args.chunk_size)?;
-    println!("Write was successful.");
+    let duration = write(0, args.addr, &buf_write, args.chunk_size)?;
+    println!(
+        "Write was successful ({}/s).",
+        ISizeFormatter::new(args.size as f64 / duration.as_secs_f64(), BINARY),
+    );
 
     // Read
     let mut buf_read = vec![0; args.size as usize];
     read(0, args.addr, &mut buf_read, args.chunk_size)?;
     assert_eq!(buf_write, buf_read);
-    println!("Read was successful.");
-
-    println!("{:?}", &buf_write[args.size as usize - 8..]);
-    println!("{:?}", &buf_read[args.size as usize - 8..]);
+    println!(
+        "Read was successful ({}/s).",
+        ISizeFormatter::new(args.size as f64 / duration.as_secs_f64(), BINARY),
+    );
 
     Ok(())
 }
@@ -100,13 +104,15 @@ fn parse_num(s: &str) -> Result<u64, std::num::ParseIntError> {
     }
 }
 
-fn write(channel: u32, addr: u64, buf: &[u8], chunk_size: Option<u64>) -> Result<()> {
+fn write(channel: u32, addr: u64, buf: &[u8], chunk_size: Option<u64>) -> Result<Duration> {
     let path = format!("/dev/xdma0_h2c_{}", channel);
     let mut file = OpenOptions::new()
         .read(true)
         .write(true)
         .open(&path)
         .with_context(|| format!("Failed to open {} for writing.", path))?;
+
+    let start = Instant::now();
 
     file.seek(SeekFrom::Start(addr))
         .with_context(|| format!("Failed to seek to {} in {} for writing.", addr, path))?;
@@ -117,15 +123,19 @@ fn write(channel: u32, addr: u64, buf: &[u8], chunk_size: Option<u64>) -> Result
     };
     res.with_context(|| format!("Failed to write to {} in {}.", addr, path))?;
 
-    Ok(())
+    let duration = start.elapsed();
+
+    Ok(duration)
 }
 
-fn read(channel: u32, addr: u64, buf: &mut [u8], chunk_size: Option<u64>) -> Result<()> {
+fn read(channel: u32, addr: u64, buf: &mut [u8], chunk_size: Option<u64>) -> Result<Duration> {
     let path = format!("/dev/xdma0_c2h_{}", channel);
     let mut file = OpenOptions::new()
         .read(true)
         .open(&path)
         .with_context(|| format!("Failed to open {} for reading.", path))?;
+
+    let start = Instant::now();
 
     file.seek(SeekFrom::Start(addr))
         .with_context(|| format!("Failed to seek to {} in {} for reading.", addr, path))?;
@@ -136,7 +146,9 @@ fn read(channel: u32, addr: u64, buf: &mut [u8], chunk_size: Option<u64>) -> Res
     };
     res.with_context(|| format!("Failed to read from {} in {}.", addr, path))?;
 
-    Ok(())
+    let duration = start.elapsed();
+
+    Ok(duration)
 }
 
 fn write_all_chunked(writer: &mut impl Write, mut buf: &[u8], chunk_size: usize) -> io::Result<()> {
