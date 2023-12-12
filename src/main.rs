@@ -1,11 +1,8 @@
+use anyhow::{Context, Result};
 use std::{
-    error::Error as StdError,
     fs::OpenOptions,
     io::{Read, Seek, SeekFrom, Write},
 };
-
-type Error = Box<dyn StdError>;
-type Result<T, E = Error> = std::result::Result<T, E>;
 
 fn main() -> Result<()> {
     println!("Hello, world!");
@@ -26,24 +23,32 @@ fn main() -> Result<()> {
 }
 
 fn write(channel: u32, addr: u64, buf: &[u8]) -> Result<()> {
+    let path = format!("/dev/xdma0_h2c_{}", channel);
     let mut file = OpenOptions::new()
         .read(true)
         .write(true)
-        .open(format!("/dev/xdma0_h2c_{}", channel))?;
+        .open(&path)
+        .with_context(|| format!("Failed to open {} for writing.", path))?;
 
-    file.seek(SeekFrom::Start(addr))?;
-    file.write_all(buf)?;
+    file.seek(SeekFrom::Start(addr))
+        .with_context(|| format!("Failed to seek to {} in {} for writing.", addr, path))?;
+    file.write_all(buf)
+        .with_context(|| format!("Failed to write to {} in {}.", addr, path))?;
 
     Ok(())
 }
 
 fn read(channel: u32, addr: u64, buf: &mut [u8]) -> Result<()> {
+    let path = format!("/dev/xdma0_h2c_{}", channel);
     let mut file = OpenOptions::new()
         .read(true)
-        .open(format!("/dev/xdma0_h2c_{}", channel))?;
+        .open(&path)
+        .with_context(|| format!("Failed to open {} for reading.", path))?;
 
-    file.seek(SeekFrom::Start(addr))?;
-    file.read_exact(buf)?;
+    file.seek(SeekFrom::Start(addr))
+        .with_context(|| format!("Failed to seek to {} in {} for reading.", addr, path))?;
+    file.read_exact(buf)
+        .with_context(|| format!("Failed to read from {} in {}.", addr, path))?;
 
     Ok(())
 }
