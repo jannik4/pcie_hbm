@@ -4,7 +4,7 @@ use parse_size::parse_size;
 use std::{
     fmt,
     fs::OpenOptions,
-    io::{Read, Seek, SeekFrom, Write},
+    io::{self, Read, Seek, SeekFrom, Write},
 };
 
 fn main() -> Result<()> {
@@ -18,12 +18,12 @@ fn main() -> Result<()> {
     let buf_write = (0..args.size).map(|v| (v % 256) as u8).collect::<Vec<_>>();
 
     // Write
-    write(0, args.addr, &buf_write)?;
+    write(0, args.addr, &buf_write, args.chunk_size)?;
     println!("Write was successful.");
 
     // Read
     let mut buf_read = vec![0; args.size as usize];
-    read(0, args.addr, &mut buf_read)?;
+    read(0, args.addr, &mut buf_read, args.chunk_size)?;
     assert_eq!(buf_write, buf_read);
     println!("Read was successful.");
 
@@ -38,6 +38,7 @@ struct Args {
     channel: u32,
     addr: u64,
     size: u64,
+    chunk_size: Option<u64>,
 }
 
 impl Args {
@@ -54,6 +55,7 @@ impl Args {
             size: args
                 .opt_value_from_fn(["-s", "--size"], |s| parse_size(s))?
                 .unwrap_or(default.size),
+            chunk_size: args.opt_value_from_fn(["-k", "--chunk-size"], |s| parse_size(s))?,
         })
     }
 }
@@ -64,6 +66,7 @@ impl Default for Args {
             channel: 0,
             addr: 0,
             size: 1024,
+            chunk_size: None,
         }
     }
 }
@@ -97,7 +100,7 @@ fn parse_num(s: &str) -> Result<u64, std::num::ParseIntError> {
     }
 }
 
-fn write(channel: u32, addr: u64, buf: &[u8]) -> Result<()> {
+fn write(channel: u32, addr: u64, buf: &[u8], chunk_size: Option<u64>) -> Result<()> {
     let path = format!("/dev/xdma0_h2c_{}", channel);
     let mut file = OpenOptions::new()
         .read(true)
@@ -107,15 +110,17 @@ fn write(channel: u32, addr: u64, buf: &[u8]) -> Result<()> {
 
     file.seek(SeekFrom::Start(addr))
         .with_context(|| format!("Failed to seek to {} in {} for writing.", addr, path))?;
-    // file.write_all(buf)
-    //     .with_context(|| format!("Failed to write to {} in {}.", addr, path))?;
 
-    write_all_chunked(&mut file, buf, 4096)?;
+    let res = match chunk_size {
+        Some(chunk_size) => write_all_chunked(&mut file, buf, chunk_size as usize),
+        None => file.write_all(buf),
+    };
+    res.with_context(|| format!("Failed to write to {} in {}.", addr, path))?;
 
     Ok(())
 }
 
-fn read(channel: u32, addr: u64, buf: &mut [u8]) -> Result<()> {
+fn read(channel: u32, addr: u64, buf: &mut [u8], chunk_size: Option<u64>) -> Result<()> {
     let path = format!("/dev/xdma0_c2h_{}", channel);
     let mut file = OpenOptions::new()
         .read(true)
@@ -124,32 +129,58 @@ fn read(channel: u32, addr: u64, buf: &mut [u8]) -> Result<()> {
 
     file.seek(SeekFrom::Start(addr))
         .with_context(|| format!("Failed to seek to {} in {} for reading.", addr, path))?;
-    file.read_exact(buf)
-        .with_context(|| format!("Failed to read from {} in {}.", addr, path))?;
+
+    let res = match chunk_size {
+        Some(chunk_size) => read_exact_chunked(&mut file, buf, chunk_size as usize),
+        None => file.read_exact(buf),
+    };
+    res.with_context(|| format!("Failed to read from {} in {}.", addr, path))?;
 
     Ok(())
 }
 
-fn write_all_chunked(
-    writer: &mut impl std::io::Write,
-    mut buf: &[u8],
-    chunk_size: usize,
-) -> std::io::Result<()> {
+fn write_all_chunked(writer: &mut impl Write, mut buf: &[u8], chunk_size: usize) -> io::Result<()> {
     while !buf.is_empty() {
         match writer.write(&buf[..usize::min(chunk_size, buf.len())]) {
             Ok(0) => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::WriteZero,
+                return Err(io::Error::new(
+                    io::ErrorKind::WriteZero,
                     "failed to write whole buffer",
                 ));
             }
             Ok(n) => {
                 buf = &buf[n..];
-                println!("Wrote {} bytes.", n);
             }
-            Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
             Err(e) => return Err(e),
         }
     }
     Ok(())
+}
+
+fn read_exact_chunked(
+    this: &mut impl Read,
+    mut buf: &mut [u8],
+    chunk_size: usize,
+) -> io::Result<()> {
+    while !buf.is_empty() {
+        let n = usize::min(chunk_size, buf.len());
+        match this.read(&mut buf[..n]) {
+            Ok(0) => break,
+            Ok(n) => {
+                let tmp = buf;
+                buf = &mut tmp[n..];
+            }
+            Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    if !buf.is_empty() {
+        Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "failed to fill whole buffer",
+        ))
+    } else {
+        Ok(())
+    }
 }
