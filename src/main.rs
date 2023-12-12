@@ -46,7 +46,7 @@ impl Args {
                 .opt_value_from_str(["-c", "--channel"])?
                 .unwrap_or(default.channel),
             addr: args
-                .opt_value_from_str(["-a", "--addr"])?
+                .opt_value_from_fn(["-a", "--addr"], parse_num)?
                 .unwrap_or(default.addr),
             size: args
                 .opt_value_from_fn(["-s", "--size"], |s| parse_size(s))?
@@ -81,6 +81,16 @@ impl fmt::Display for Args {
             self.size
         )?;
         Ok(())
+    }
+}
+
+fn parse_num(s: &str) -> Result<u64, std::num::ParseIntError> {
+    if let Some(s) = s.strip_prefix("0x") {
+        u64::from_str_radix(s, 16)
+    } else if let Some(s) = s.strip_prefix("0b") {
+        u64::from_str_radix(s, 2)
+    } else {
+        s.parse::<u64>()
     }
 }
 
