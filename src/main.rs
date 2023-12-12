@@ -72,7 +72,7 @@ impl Args {
 impl Default for Args {
     fn default() -> Self {
         Self {
-            channel: Some(0),
+            channel: None,
             addr: 0,
             size: 1024,
             chunk_size: None,
