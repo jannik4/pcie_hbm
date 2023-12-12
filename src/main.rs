@@ -39,7 +39,7 @@ fn write(channel: u32, addr: u64, buf: &[u8]) -> Result<()> {
 }
 
 fn read(channel: u32, addr: u64, buf: &mut [u8]) -> Result<()> {
-    let path = format!("/dev/xdma0_h2c_{}", channel);
+    let path = format!("/dev/xdma0_c2h_{}", channel);
     let mut file = OpenOptions::new()
         .read(true)
         .open(&path)
