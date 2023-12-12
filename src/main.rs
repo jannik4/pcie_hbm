@@ -110,7 +110,7 @@ fn write(channel: u32, addr: u64, buf: &[u8]) -> Result<()> {
     // file.write_all(buf)
     //     .with_context(|| format!("Failed to write to {} in {}.", addr, path))?;
 
-    write_all(&mut file, buf)?;
+    write_all_chunked(&mut file, buf, 4096)?;
 
     Ok(())
 }
@@ -130,9 +130,13 @@ fn read(channel: u32, addr: u64, buf: &mut [u8]) -> Result<()> {
     Ok(())
 }
 
-fn write_all(writer: &mut impl std::io::Write, mut buf: &[u8]) -> std::io::Result<()> {
+fn write_all_chunked(
+    writer: &mut impl std::io::Write,
+    mut buf: &[u8],
+    chunk_size: usize,
+) -> std::io::Result<()> {
     while !buf.is_empty() {
-        match writer.write(buf) {
+        match writer.write(&buf[..usize::min(chunk_size, buf.len())]) {
             Ok(0) => {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::WriteZero,
