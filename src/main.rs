@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
-use bytesize::ByteSize;
+use humansize::{SizeFormatter, BINARY};
+use parse_size::parse_size;
 use std::{
     fmt,
     fs::OpenOptions,
@@ -8,22 +9,20 @@ use std::{
 
 fn main() -> Result<()> {
     // Parse args
-    let args = Args::from_env();
+    let args = Args::from_env().context("failed to parse args")?;
 
     // Print args
     println!("{}", args);
 
     // Prepare data
-    let buf_write = (0..args.size.0)
-        .map(|v| (v % 256) as u8)
-        .collect::<Vec<_>>();
+    let buf_write = (0..args.size).map(|v| (v % 256) as u8).collect::<Vec<_>>();
 
     // Write
     write(0, 0, &buf_write)?;
     println!("Write was successful.");
 
     // Read
-    let mut buf_read = vec![0; args.size.0 as usize];
+    let mut buf_read = vec![0; args.size as usize];
     read(0, 0, &mut buf_read)?;
     assert_eq!(buf_write, buf_read);
     println!("Read was successful.");
@@ -35,24 +34,24 @@ fn main() -> Result<()> {
 struct Args {
     channel: u32,
     addr: u64,
-    size: ByteSize,
+    size: u64,
 }
 
 impl Args {
-    fn from_env() -> Self {
+    fn from_env() -> Result<Self> {
         let default = Self::default();
         let mut args = pico_args::Arguments::from_env();
-        Self {
+        Ok(Self {
             channel: args
-                .value_from_str(["-c", "--channel"])
+                .opt_value_from_str(["-c", "--channel"])?
                 .unwrap_or(default.channel),
             addr: args
-                .value_from_str(["-a", "--addr"])
+                .opt_value_from_str(["-a", "--addr"])?
                 .unwrap_or(default.addr),
             size: args
-                .value_from_str(["-s", "--size"])
+                .opt_value_from_fn(["-s", "--size"], |s| parse_size(s))?
                 .unwrap_or(default.size),
-        }
+        })
     }
 }
 
@@ -61,7 +60,7 @@ impl Default for Args {
         Self {
             channel: 0,
             addr: 0,
-            size: ByteSize::kib(1),
+            size: 1024,
         }
     }
 }
@@ -70,7 +69,12 @@ impl fmt::Display for Args {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "Channel: {}", self.channel)?;
         writeln!(f, "Address: 0x{:x}", self.addr)?;
-        writeln!(f, "Size: {}", self.size)?;
+        writeln!(
+            f,
+            "Size: {} ({})",
+            SizeFormatter::new(self.size, BINARY),
+            self.size
+        )?;
         Ok(())
     }
 }
