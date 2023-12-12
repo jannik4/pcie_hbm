@@ -1,25 +1,78 @@
 use anyhow::{Context, Result};
+use bytesize::ByteSize;
 use std::{
+    fmt,
     fs::OpenOptions,
     io::{Read, Seek, SeekFrom, Write},
 };
 
 fn main() -> Result<()> {
+    // Parse args
+    let args = Args::from_env();
+
+    // Print args
+    println!("{}", args);
+
     // Prepare data
-    let size = 1024;
-    let buf_write = (0..size).map(|v| (v % 256) as u8).collect::<Vec<_>>();
+    let buf_write = (0..args.size.0)
+        .map(|v| (v % 256) as u8)
+        .collect::<Vec<_>>();
 
     // Write
     write(0, 0, &buf_write)?;
     println!("Write was successful.");
 
     // Read
-    let mut buf_read = vec![0; size];
+    let mut buf_read = vec![0; args.size.0 as usize];
     read(0, 0, &mut buf_read)?;
     assert_eq!(buf_write, buf_read);
     println!("Read was successful.");
 
     Ok(())
+}
+
+#[derive(Debug)]
+struct Args {
+    channel: u32,
+    addr: u64,
+    size: ByteSize,
+}
+
+impl Args {
+    fn from_env() -> Self {
+        let default = Self::default();
+        let mut args = pico_args::Arguments::from_env();
+        Self {
+            channel: args
+                .value_from_str(["-c", "--channel"])
+                .unwrap_or(default.channel),
+            addr: args
+                .value_from_str(["-a", "--addr"])
+                .unwrap_or(default.addr),
+            size: args
+                .value_from_str(["-s", "--size"])
+                .unwrap_or(default.size),
+        }
+    }
+}
+
+impl Default for Args {
+    fn default() -> Self {
+        Self {
+            channel: 0,
+            addr: 0,
+            size: ByteSize::kib(1),
+        }
+    }
+}
+
+impl fmt::Display for Args {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Channel: {}", self.channel)?;
+        writeln!(f, "Address: 0x{:x}", self.addr)?;
+        writeln!(f, "Size: {}", self.size)?;
+        Ok(())
+    }
 }
 
 fn write(channel: u32, addr: u64, buf: &[u8]) -> Result<()> {
