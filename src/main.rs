@@ -107,8 +107,10 @@ fn write(channel: u32, addr: u64, buf: &[u8]) -> Result<()> {
 
     file.seek(SeekFrom::Start(addr))
         .with_context(|| format!("Failed to seek to {} in {} for writing.", addr, path))?;
-    file.write_all(buf)
-        .with_context(|| format!("Failed to write to {} in {}.", addr, path))?;
+    // file.write_all(buf)
+    //     .with_context(|| format!("Failed to write to {} in {}.", addr, path))?;
+
+    write_all(&mut file, buf)?;
 
     Ok(())
 }
@@ -125,5 +127,25 @@ fn read(channel: u32, addr: u64, buf: &mut [u8]) -> Result<()> {
     file.read_exact(buf)
         .with_context(|| format!("Failed to read from {} in {}.", addr, path))?;
 
+    Ok(())
+}
+
+fn write_all(writer: &mut impl std::io::Write, mut buf: &[u8]) -> std::io::Result<()> {
+    while !buf.is_empty() {
+        match writer.write(buf) {
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WriteZero,
+                    "failed to write whole buffer",
+                ));
+            }
+            Ok(n) => {
+                buf = &buf[n..];
+                println!("Wrote {} bytes.", n);
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
     Ok(())
 }
