@@ -29,7 +29,7 @@ fn main() -> Result<()> {
 
     // Read
     let mut buf_read = vec![0; args.size as usize];
-    let duration = read(0, args.addr, &mut buf_read, args.chunk_size)?;
+    let duration = read(&args, &mut buf_read)?;
     assert_eq!(buf_write, buf_read);
     println!(
         "Read was successful ({:?} @ {}/s).",
@@ -152,20 +152,11 @@ impl PcieWriter {
         chunk_size: Option<u64>,
     ) -> Result<()> {
         thread::scope(|s| {
-            let worker_size = buf.len() / worker.len();
-            let worker_len = worker.len();
-
+            let buf_chunk_size = usize::div_ceil(buf.len(), worker.len());
             let threads = worker
                 .iter_mut()
-                .enumerate()
-                .map(|(idx, writer)| {
-                    let buf = if idx == worker_len - 1 {
-                        &buf[idx * worker_size..]
-                    } else {
-                        &buf[idx * worker_size..(idx + 1) * worker_size]
-                    };
-                    s.spawn(|| writer.write(addr, buf, chunk_size))
-                })
+                .zip(buf.chunks(buf_chunk_size))
+                .map(|(writer, buf)| s.spawn(|| writer.write(addr, buf, chunk_size)))
                 .collect::<Vec<_>>();
 
             for thread in threads {
@@ -196,27 +187,78 @@ fn write(args: &Args, buf: &[u8]) -> Result<Duration> {
     }
 }
 
-fn read(channel: u32, addr: u64, buf: &mut [u8], chunk_size: Option<u64>) -> Result<Duration> {
-    let path = format!("/dev/xdma0_c2h_{}", channel);
-    let mut file = OpenOptions::new()
-        .read(true)
-        .open(&path)
-        .with_context(|| format!("Failed to open {} for reading.", path))?;
+struct PcieReader {
+    channel: u32,
+    file: File,
+}
 
-    let start = Instant::now();
+impl PcieReader {
+    fn new(channel: u32) -> Result<Self> {
+        let path = format!("/dev/xdma0_c2h_{}", channel);
+        let file = OpenOptions::new()
+            .read(true)
+            .open(&path)
+            .with_context(|| format!("Failed to open {} for reading.", path))?;
+        Ok(Self { channel, file })
+    }
 
-    file.seek(SeekFrom::Start(addr))
-        .with_context(|| format!("Failed to seek to {} in {} for reading.", addr, path))?;
+    fn read(&mut self, addr: u64, buf: &mut [u8], chunk_size: Option<u64>) -> Result<()> {
+        self.file.seek(SeekFrom::Start(addr)).with_context(|| {
+            format!(
+                "Failed to seek to {} in channel {} for reading.",
+                addr, self.channel
+            )
+        })?;
 
-    let res = match chunk_size {
-        Some(chunk_size) => read_exact_chunked(&mut file, buf, chunk_size as usize),
-        None => file.read_exact(buf),
-    };
-    res.with_context(|| format!("Failed to read from {} in {}.", addr, path))?;
+        let res = match chunk_size {
+            Some(chunk_size) => read_exact_chunked(&mut self.file, buf, chunk_size as usize),
+            None => self.file.read_exact(buf),
+        };
+        res.with_context(|| format!("Failed to read from {} in channel {}.", addr, self.channel))?;
 
-    let duration = start.elapsed();
+        Ok(())
+    }
 
-    Ok(duration)
+    fn read_parallel(
+        worker: &mut [Self],
+        addr: u64,
+        buf: &mut [u8],
+        chunk_size: Option<u64>,
+    ) -> Result<()> {
+        thread::scope(|s| {
+            let buf_chunk_size = usize::div_ceil(buf.len(), worker.len());
+            let threads = worker
+                .iter_mut()
+                .zip(buf.chunks_mut(buf_chunk_size))
+                .map(|(reader, buf)| s.spawn(|| reader.read(addr, buf, chunk_size)))
+                .collect::<Vec<_>>();
+
+            for thread in threads {
+                thread.join().unwrap()?;
+            }
+
+            Ok(())
+        })
+    }
+}
+
+fn read(args: &Args, buf: &mut [u8]) -> Result<Duration> {
+    match args.channel {
+        Some(channel) => {
+            let mut reader = PcieReader::new(channel)?;
+            let start = Instant::now();
+            reader.read(args.addr, buf, args.chunk_size)?;
+            let duration = start.elapsed();
+            Ok(duration)
+        }
+        None => {
+            let mut worker = (0..4).map(PcieReader::new).collect::<Result<Vec<_>>>()?;
+            let start = Instant::now();
+            PcieReader::read_parallel(&mut worker, args.addr, buf, args.chunk_size)?;
+            let duration = start.elapsed();
+            Ok(duration)
+        }
+    }
 }
 
 fn write_all_chunked(writer: &mut impl Write, mut buf: &[u8], chunk_size: usize) -> io::Result<()> {
