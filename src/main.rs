@@ -21,7 +21,8 @@ fn main() -> Result<()> {
     // Write
     let duration = write(0, args.addr, &buf_write, args.chunk_size)?;
     println!(
-        "Write was successful ({}/s).",
+        "Write was successful ({:?} @ {}/s).",
+        duration,
         ISizeFormatter::new(args.size as f64 / duration.as_secs_f64(), BINARY),
     );
 
@@ -30,7 +31,8 @@ fn main() -> Result<()> {
     let duration = read(0, args.addr, &mut buf_read, args.chunk_size)?;
     assert_eq!(buf_write, buf_read);
     println!(
-        "Read was successful ({}/s).",
+        "Read was successful ({:#?} @ {}/s).",
+        duration,
         ISizeFormatter::new(args.size as f64 / duration.as_secs_f64(), BINARY),
     );
 
@@ -86,7 +88,7 @@ impl fmt::Display for Args {
         )?;
         writeln!(
             f,
-            "Size: {} ({})",
+            "Size: {} ({} bytes)",
             SizeFormatter::new(self.size, BINARY),
             self.size
         )?;
