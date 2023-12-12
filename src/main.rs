@@ -18,12 +18,12 @@ fn main() -> Result<()> {
     let buf_write = (0..args.size).map(|v| (v % 256) as u8).collect::<Vec<_>>();
 
     // Write
-    write(0, 0, &buf_write)?;
+    write(0, args.addr, &buf_write)?;
     println!("Write was successful.");
 
     // Read
     let mut buf_read = vec![0; args.size as usize];
-    read(0, 0, &mut buf_read)?;
+    read(0, args.addr + 8, &mut buf_read)?;
     assert_eq!(buf_write, buf_read);
     println!("Read was successful.");
 
