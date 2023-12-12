@@ -5,19 +5,19 @@ use std::{
 };
 
 fn main() -> Result<()> {
-    println!("Hello, world!");
-
     // Prepare data
     let size = 1024;
     let buf_write = (0..size).map(|v| (v % 256) as u8).collect::<Vec<_>>();
 
     // Write
     write(0, 0, &buf_write)?;
+    print!("Write was successful.");
 
     // Read
     let mut buf_read = vec![0; size];
     read(0, 0, &mut buf_read)?;
     assert_eq!(buf_write, buf_read);
+    print!("Read was successful.");
 
     Ok(())
 }
