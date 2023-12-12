@@ -11,13 +11,13 @@ fn main() -> Result<()> {
 
     // Write
     write(0, 0, &buf_write)?;
-    print!("Write was successful.");
+    println!("Write was successful.");
 
     // Read
     let mut buf_read = vec![0; size];
     read(0, 0, &mut buf_read)?;
     assert_eq!(buf_write, buf_read);
-    print!("Read was successful.");
+    println!("Read was successful.");
 
     Ok(())
 }
