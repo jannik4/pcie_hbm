@@ -23,7 +23,7 @@ fn main() -> Result<()> {
 
     // Read
     let mut buf_read = vec![0; args.size as usize];
-    read(0, args.addr + 8 * 1024 * 1024 * 1024, &mut buf_read)?;
+    read(0, args.addr, &mut buf_read)?;
     assert_eq!(buf_write, buf_read);
     println!("Read was successful.");
 
