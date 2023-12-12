@@ -3,8 +3,9 @@ use humansize::{ISizeFormatter, SizeFormatter, BINARY};
 use parse_size::parse_size;
 use std::{
     fmt,
-    fs::OpenOptions,
+    fs::{File, OpenOptions},
     io::{self, Read, Seek, SeekFrom, Write},
+    thread,
     time::{Duration, Instant},
 };
 
@@ -19,7 +20,7 @@ fn main() -> Result<()> {
     let buf_write = (0..args.size).map(|v| (v % 256) as u8).collect::<Vec<_>>();
 
     // Write
-    let duration = write(0, args.addr, &buf_write, args.chunk_size)?;
+    let duration = write(&args, &buf_write)?;
     println!(
         "Write was successful ({:?} @ {}/s).",
         duration,
@@ -41,7 +42,7 @@ fn main() -> Result<()> {
 
 #[derive(Debug)]
 struct Args {
-    channel: u32,
+    channel: Option<u32>,
     addr: u64,
     size: u64,
     chunk_size: Option<u64>,
@@ -54,14 +55,16 @@ impl Args {
         Ok(Self {
             channel: args
                 .opt_value_from_str(["-c", "--channel"])?
-                .unwrap_or(default.channel),
+                .or(default.channel),
             addr: args
                 .opt_value_from_fn(["-a", "--addr"], parse_num)?
                 .unwrap_or(default.addr),
             size: args
                 .opt_value_from_fn(["-s", "--size"], |s| parse_size(s))?
                 .unwrap_or(default.size),
-            chunk_size: args.opt_value_from_fn(["-k", "--chunk-size"], |s| parse_size(s))?,
+            chunk_size: args
+                .opt_value_from_fn(["-k", "--chunk-size"], |s| parse_size(s))?
+                .or(default.chunk_size),
         })
     }
 }
@@ -69,7 +72,7 @@ impl Args {
 impl Default for Args {
     fn default() -> Self {
         Self {
-            channel: 0,
+            channel: Some(0),
             addr: 0,
             size: 1024,
             chunk_size: None,
@@ -79,7 +82,10 @@ impl Default for Args {
 
 impl fmt::Display for Args {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "Channel: {}", self.channel)?;
+        match self.channel {
+            Some(channel) => writeln!(f, "Channel: {}", channel)?,
+            None => writeln!(f, "Channel: all")?,
+        }
         writeln!(
             f,
             "Address: 0x{:x} - 0x{:x}",
@@ -106,28 +112,88 @@ fn parse_num(s: &str) -> Result<u64, std::num::ParseIntError> {
     }
 }
 
-fn write(channel: u32, addr: u64, buf: &[u8], chunk_size: Option<u64>) -> Result<Duration> {
-    let path = format!("/dev/xdma0_h2c_{}", channel);
-    let mut file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&path)
-        .with_context(|| format!("Failed to open {} for writing.", path))?;
+struct PcieWriter {
+    channel: u32,
+    file: File,
+}
 
-    let start = Instant::now();
+impl PcieWriter {
+    fn new(channel: u32) -> Result<Self> {
+        let path = format!("/dev/xdma0_h2c_{}", channel);
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .with_context(|| format!("Failed to open {} for writing.", path))?;
+        Ok(Self { channel, file })
+    }
 
-    file.seek(SeekFrom::Start(addr))
-        .with_context(|| format!("Failed to seek to {} in {} for writing.", addr, path))?;
+    fn write(&mut self, addr: u64, buf: &[u8], chunk_size: Option<u64>) -> Result<()> {
+        self.file.seek(SeekFrom::Start(addr)).with_context(|| {
+            format!(
+                "Failed to seek to {} in channel {} for writing.",
+                addr, self.channel
+            )
+        })?;
 
-    let res = match chunk_size {
-        Some(chunk_size) => write_all_chunked(&mut file, buf, chunk_size as usize),
-        None => file.write_all(buf),
-    };
-    res.with_context(|| format!("Failed to write to {} in {}.", addr, path))?;
+        let res = match chunk_size {
+            Some(chunk_size) => write_all_chunked(&mut self.file, buf, chunk_size as usize),
+            None => self.file.write_all(buf),
+        };
+        res.with_context(|| format!("Failed to write to {} in channel {}.", addr, self.channel))?;
 
-    let duration = start.elapsed();
+        Ok(())
+    }
 
-    Ok(duration)
+    fn write_parallel(
+        worker: &mut [Self],
+        addr: u64,
+        buf: &[u8],
+        chunk_size: Option<u64>,
+    ) -> Result<()> {
+        thread::scope(|s| {
+            let worker_size = buf.len() / worker.len();
+            let worker_len = worker.len();
+
+            let threads = worker
+                .iter_mut()
+                .enumerate()
+                .map(|(idx, writer)| {
+                    let buf = if idx == worker_len - 1 {
+                        &buf[idx * worker_size..]
+                    } else {
+                        &buf[idx * worker_size..(idx + 1) * worker_size]
+                    };
+                    s.spawn(|| writer.write(addr, buf, chunk_size))
+                })
+                .collect::<Vec<_>>();
+
+            for thread in threads {
+                thread.join().unwrap()?;
+            }
+
+            Ok(())
+        })
+    }
+}
+
+fn write(args: &Args, buf: &[u8]) -> Result<Duration> {
+    match args.channel {
+        Some(channel) => {
+            let mut writer = PcieWriter::new(channel)?;
+            let start = Instant::now();
+            writer.write(args.addr, buf, args.chunk_size)?;
+            let duration = start.elapsed();
+            Ok(duration)
+        }
+        None => {
+            let mut worker = (0..4).map(PcieWriter::new).collect::<Result<Vec<_>>>()?;
+            let start = Instant::now();
+            PcieWriter::write_parallel(&mut worker, args.addr, buf, args.chunk_size)?;
+            let duration = start.elapsed();
+            Ok(duration)
+        }
+    }
 }
 
 fn read(channel: u32, addr: u64, buf: &mut [u8], chunk_size: Option<u64>) -> Result<Duration> {
