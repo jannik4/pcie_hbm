@@ -20,7 +20,7 @@ fn main() -> Result<()> {
     let buf_write = (0..args.size).map(|v| (v % 256) as u8).collect::<Vec<_>>();
 
     // Write
-    let duration = write(&args, &buf_write)?;
+    let duration = write(&args, &buf_write, args.warmup)?;
     println!(
         "Write was successful ({:?} @ {}/s).",
         duration,
@@ -29,7 +29,7 @@ fn main() -> Result<()> {
 
     // Read
     let mut buf_read = vec![0; args.size as usize];
-    let duration = read(&args, &mut buf_read)?;
+    let duration = read(&args, &mut buf_read, args.warmup)?;
     assert_eq!(buf_write, buf_read);
     println!(
         "Read was successful ({:?} @ {}/s).",
@@ -46,6 +46,7 @@ struct Args {
     addr: u64,
     size: u64,
     chunk_size: Option<u64>,
+    warmup: bool,
 }
 
 impl Args {
@@ -65,6 +66,7 @@ impl Args {
             chunk_size: args
                 .opt_value_from_fn(["-k", "--chunk-size"], |s| parse_size(s))?
                 .or(default.chunk_size),
+            warmup: args.contains(["-w", "--warmup"]),
         })
     }
 }
@@ -76,6 +78,7 @@ impl Default for Args {
             addr: 0,
             size: 1024,
             chunk_size: None,
+            warmup: false,
         }
     }
 }
@@ -168,20 +171,34 @@ impl PcieWriter {
     }
 }
 
-fn write(args: &Args, buf: &[u8]) -> Result<Duration> {
+fn write(args: &Args, buf: &[u8], warmup: bool) -> Result<Duration> {
     match args.channel {
         Some(channel) => {
             let mut writer = PcieWriter::new(channel)?;
+
+            if warmup {
+                do_warmup(|| writer.write(args.addr, buf, args.chunk_size))?;
+            }
+
             let start = Instant::now();
             writer.write(args.addr, buf, args.chunk_size)?;
             let duration = start.elapsed();
+
             Ok(duration)
         }
         None => {
             let mut worker = (0..4).map(PcieWriter::new).collect::<Result<Vec<_>>>()?;
+
+            if warmup {
+                do_warmup(|| {
+                    PcieWriter::write_parallel(&mut worker, args.addr, buf, args.chunk_size)
+                })?;
+            }
+
             let start = Instant::now();
             PcieWriter::write_parallel(&mut worker, args.addr, buf, args.chunk_size)?;
             let duration = start.elapsed();
+
             Ok(duration)
         }
     }
@@ -242,20 +259,34 @@ impl PcieReader {
     }
 }
 
-fn read(args: &Args, buf: &mut [u8]) -> Result<Duration> {
+fn read(args: &Args, buf: &mut [u8], warmup: bool) -> Result<Duration> {
     match args.channel {
         Some(channel) => {
             let mut reader = PcieReader::new(channel)?;
+
+            if warmup {
+                do_warmup(|| reader.read(args.addr, buf, args.chunk_size))?;
+            }
+
             let start = Instant::now();
             reader.read(args.addr, buf, args.chunk_size)?;
             let duration = start.elapsed();
+
             Ok(duration)
         }
         None => {
             let mut worker = (0..4).map(PcieReader::new).collect::<Result<Vec<_>>>()?;
+
+            if warmup {
+                do_warmup(|| {
+                    PcieReader::read_parallel(&mut worker, args.addr, buf, args.chunk_size)
+                })?;
+            }
+
             let start = Instant::now();
             PcieReader::read_parallel(&mut worker, args.addr, buf, args.chunk_size)?;
             let duration = start.elapsed();
+
             Ok(duration)
         }
     }
@@ -305,4 +336,12 @@ fn read_exact_chunked(
     } else {
         Ok(())
     }
+}
+
+fn do_warmup(mut f: impl FnMut() -> Result<()>) -> Result<()> {
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(1) {
+        f()?;
+    }
+    Ok(())
 }
