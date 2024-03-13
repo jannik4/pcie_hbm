@@ -55,6 +55,8 @@ def gen_plots():
             ax.plot(block_sizes, speeds, "o", label=name)
         ax.tick_params(axis="x", labelrotation=45)
         ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: fmt_speed(x)))
+        ax.set_xlabel("Block size")
+        ax.set_ylabel("Speed")
         fig.suptitle(opt["title"])
         fig.legend()
         fig.savefig(f"results/{opt['key']}.svg", bbox_inches="tight")
